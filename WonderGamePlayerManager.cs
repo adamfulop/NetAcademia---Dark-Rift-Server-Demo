@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using DarkRift;
 using DarkRift.Server;
@@ -6,6 +7,8 @@ using WonderGameServer.Model;
 
 namespace WonderGameServer {
     public class WonderGamePlayerManager : Plugin {
+        private readonly Dictionary<IClient, Player> _players = new Dictionary<IClient, Player>();
+        
         public WonderGamePlayerManager(PluginLoadData pluginLoadData) : base(pluginLoadData) {
             ClientManager.ClientConnected += ClientConnected;
         }
@@ -33,6 +36,51 @@ namespace WonderGameServer {
                     var otherClients = ClientManager.GetAllClients().Where(c => c != e.Client);
                     foreach (var client in otherClients) {
                         client.SendMessage(message, SendMode.Reliable);
+                    }
+                }
+            }
+            
+            _players.Add(e.Client, newPlayer);
+            using (var writer = DarkRiftWriter.Create()) {
+                foreach (var player in _players.Values) {
+                    writer.Write(player.Id);
+                    writer.Write(player.PositionX);
+                    writer.Write(player.PositionZ);
+                    writer.Write(player.RotationY);
+                }
+
+                using (var message = Message.Create(MessageTags.SpawnPlayerTag, writer)) {
+                    e.Client.SendMessage(message, SendMode.Reliable);
+                }
+            }
+
+            e.Client.MessageReceived += MovementMessageReceived;
+        }
+
+        private void MovementMessageReceived(object sender, MessageReceivedEventArgs e) {
+            using (var message = e.GetMessage()) {
+                if (message.Tag == MessageTags.MovePlayerTag) {
+                    using (var reader = message.GetReader()) {
+                        var positionX = reader.ReadSingle();
+                        var positionZ = reader.ReadSingle();
+                        var rotationY = reader.ReadSingle();
+
+                        var player = _players[e.Client];
+                        player.PositionX = positionX;
+                        player.PositionZ = positionZ;
+                        player.RotationY = rotationY;
+
+                        using (var writer = DarkRiftWriter.Create()) {
+                            writer.Write(player.Id);
+                            writer.Write(player.PositionX);
+                            writer.Write(player.PositionZ);
+                            writer.Write(player.RotationY);
+                            message.Serialize(writer);
+                        }
+
+                        foreach (var client in ClientManager.GetAllClients().Where(c => c != e.Client)) {
+                            client.SendMessage(message, e.SendMode);
+                        }
                     }
                 }
             }
